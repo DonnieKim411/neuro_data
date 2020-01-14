@@ -486,7 +486,7 @@ class DataConfig(ConfigBase, dj.Lookup):
         @property
         def content(self):
             for p in product(['all'],
-                             ['stimulus.Frame', '~stimulus.Frame'],
+                             ['stimulus.Frame', '~stimulus.Frame', 'stimulus.ColorFrameProjector'],
                              ['images,responses', ''],
                              [True],
                              ['L4', 'L2/3'],
