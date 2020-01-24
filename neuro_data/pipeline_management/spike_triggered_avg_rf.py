@@ -3,36 +3,60 @@ import datajoint as dj
 import numpy as np
 import matplotlib.pyplot as plt
 import datajoint as dj
-from neuro_data.utils.data import h5cached
 
-from neuro_data.static_images.data_schemas import (StaticScanCandidate, 
-    StaticScan, ImageNetSplit, ConditionTier, Frame, InputResponse, Eye,
-    Treadmill, StaticMultiDataset, StaticMultiDatasetGroupAssignment, ExcludedTrial)
+from neuro_data.static_images import data_schemas
 
-fuse = dj.create_virtual_module('fuse', 'pipeline_fuse')
-reso = dj.create_virtual_module('reso', 'pipeline_reso')
-meso = dj.create_virtual_module('meso', 'pipeline_meso')
 stimulus = dj.create_virtual_module('stimulus', 'pipeline_stimulus')
-data_schemas = dj.create_virtual_module('data_schemas','neurodata_static')
+# from neuro_data.utils.data import h5cached
 
+# from neuro_data.static_images.data_schemas import (StaticScanCandidate, 
+#     StaticScan, ImageNetSplit, ConditionTier, Frame, InputResponse, Eye,
+#     Treadmill, StaticMultiDataset, StaticMultiDatasetGroupAssignment, ExcludedTrial)
+
+# fuse = dj.create_virtual_module('fuse', 'pipeline_fuse')
+# reso = dj.create_virtual_module('reso', 'pipeline_reso')
+# meso = dj.create_virtual_module('meso', 'pipeline_meso')
+
+
+# raw data storage
+dj.config['extnernal'] = dict(protocol='file',
+                              location='/external/')
+
+# If the cache is enabled, the fetch operation need not access ~external directly. 
+# Instead fetch will retrieve the cached object without downloading directly from 
+# the ‘real’ external store.
+dj.config['cache'] = dict(
+              protocol='file',
+              location='/external/cache')
 
 # dj.config['external-data'] = {'protocol': 'file', 'location': '/external/'}
 
 schema = dj.schema('neurodata_static')
 
+def check_none(np_array):
+    """
+    check if array's elements are all Nonetype or not
+    Args:
+        np_array (np.array): numpy array
+    
+    Return:
+        bool: True if every element in an array is None. False otherwise.
+    """
+    return all(v is None for v in np_array)
+
 @schema
-class SpikeTriggeredAverageRF(dj.Computed):
+class StaticSpikeTriggeredAverageRF(dj.Computed):
     definition = """
-    # spike trigerred average using the imagenet input
+    # spike trigerred average using static image (e.g. imagenet)
     -> data_schemas.InputResponse
     """
     class Unit(dj.Part):
-            definition = """ # frame for a single unit
-            -> master
-            -> data_schemas.InputResponse.ResponseKeys
-            ---
-            sta             :blob
-            """
+        definition = """ # frame for a single unit
+        -> master
+        -> data_schemas.InputResponse.ResponseKeys
+        ---
+        sta_rf      :   cache               # STA RF 
+        """
 
     def make(self, key):
         # Get data
@@ -46,9 +70,84 @@ class SpikeTriggeredAverageRF(dj.Computed):
         print('Iterating over units')
         self.insert1(key)
         for responses, unit_key in zip(response_block.T, unit_keys):
-            sta = np.average(frames, weights=responses/responses.sum(), axis=0)
-            self.Unit.insert1({**unit_key, 'sta': sta})
+            sta_rf = np.average(frames, weights=responses/responses.sum(), axis=0)
+            self.Unit.insert1({**unit_key, 'sta_rf': sta_rf})
 
+    @staticmethod
+    def plot_sta_rf(key):
+        """
+        Plot Spike Triggered Average Receptive Field.
+        If multiple channels exist (i.e. color stimulus), then it looks for channel
+        info and plots based on which color was presented.
+        For example, if color info was [2, 3, None] in stimulus table,
+        then it fills 0 for red, and blue/green are mapped as they are (r=1, g=2, b=3).
+        If color info was [1, None, 2], then it fills 0 for blue and red/green are
+        mapped as they are.
+
+        If stimulus was in grayscale, then it plots grayscale STA RF.
+
+        Args:
+            key (dict): scan with the following keys
+                animal_id
+                session
+                scan_idx
+                unit_id
+            num_neurons: number of neurons to plot. Default at 50
+        """
+        
+        stim_type = np.unique((stimulus.Condition & (stimulus.Trial & key)).fetch('stimulus_type'))
+
+        if len(stim_type) >1:
+            msg = """There are more than 1 stimulus type ({}) for this scan!
+                    You need to either check your scan or customize the plotting
+                    for multple stimulus types!""".format(stim_type)
+            raise ValueError(msg)
+        
+        stim_type = stim_type[0].split('.')[1]
+
+        if stim_type == 'ColorFrameProjector':
+            stim_table = (stimulus.Trial & key) * (dj.U('condition_hash',
+                                                        'projector_config_id'
+                                                        'channel_1',
+                                                        'channel_2',
+                                                        'channel_3') & getattr(stimulus,stim_type))
+            
+            # config_id = stim_table.fetch('projector_config_id')
+
+            # # make sure that the config id doesnt change in the middle of recording
+            # if any(config_id):
+            #     config_id = np.unique(config_id)[0]
+            #     channels = (experiment.ProjectorConfig & 'projector_config_id = {}'.format(config_id)).fetch1('channel_1','channel_2','channel_3')
+
+            #     # check which channels were used (wrt projector)
+            #     valid_channel_inds = np.where(np.array(channels) != 'none')[0]
+
+
+
+            # else:
+            #     msg = """Projector configuration must stay the same during recording!
+            #             But config id was set to {}""".format(np.unique(config_id))
+            #     raise ValueError(msg)
+
+            channels = stim_table.fetch('channel_1','channel_2','channel_3')
+            
+            # check every channel has the same value. In theory, it should since
+            # the projector configuration doesnt change during trial.
+            # Also if they are all the same, record which channel to use (wrt image, not projector)
+            valid_colors = []
+            for ind, channel in enumerate(channels):
+                if not any(channel):
+                    if not check_none(channel):
+                        raise ValueError('channel_{} value changed during scan!'.format(ind+1))
+                else:
+                    valid_colors.append(np.unique(channel)[0]-1)
+
+            sta_rf = (StaticSpikeTriggeredAverageRF.Unit & key).fetch1('sta_rf')
+
+            
+            
+
+        pass
 
 # Adopted from Erick Cobost's static_pilot.analyses.py
 
