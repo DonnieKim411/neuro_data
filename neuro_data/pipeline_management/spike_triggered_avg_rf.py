@@ -7,27 +7,10 @@ import datajoint as dj
 from neuro_data.static_images import data_schemas
 
 stimulus = dj.create_virtual_module('stimulus', 'pipeline_stimulus')
-# from neuro_data.utils.data import h5cached
-
-# from neuro_data.static_images.data_schemas import (StaticScanCandidate, 
-#     StaticScan, ImageNetSplit, ConditionTier, Frame, InputResponse, Eye,
-#     Treadmill, StaticMultiDataset, StaticMultiDatasetGroupAssignment, ExcludedTrial)
-
-# fuse = dj.create_virtual_module('fuse', 'pipeline_fuse')
-# reso = dj.create_virtual_module('reso', 'pipeline_reso')
-# meso = dj.create_virtual_module('meso', 'pipeline_meso')
-
 
 # raw data storage
 dj.config['extnernal'] = dict(protocol='file',
                               location='/external/')
-
-# If the cache is enabled, the fetch operation need not access ~external directly. 
-# Instead fetch will retrieve the cached object without downloading directly from 
-# the ‘real’ external store.
-dj.config['cache'] = dict(
-              protocol='file',
-              location='/external/cache')
 
 # dj.config['external-data'] = {'protocol': 'file', 'location': '/external/'}
 
@@ -55,7 +38,7 @@ class StaticSpikeTriggeredAverageRF(dj.Computed):
         -> master
         -> data_schemas.InputResponse.ResponseKeys
         ---
-        sta_rf      :   cache               # STA RF 
+        sta_rf      :   external               # STA RF 
         """
 
     def make(self, key):
@@ -73,6 +56,7 @@ class StaticSpikeTriggeredAverageRF(dj.Computed):
             sta_rf = np.average(frames, weights=responses/responses.sum(), axis=0)
             self.Unit.insert1({**unit_key, 'sta_rf': sta_rf})
 
+    #TODO Finish this method
     @staticmethod
     def plot_sta_rf(key):
         """
@@ -143,9 +127,6 @@ class StaticSpikeTriggeredAverageRF(dj.Computed):
                     valid_colors.append(np.unique(channel)[0]-1)
 
             sta_rf = (StaticSpikeTriggeredAverageRF.Unit & key).fetch1('sta_rf')
-
-            
-            
 
         pass
 
