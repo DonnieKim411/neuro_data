@@ -610,6 +610,7 @@ class InputResponse(dj.Computed, FilterMixin):
                 row_info[k] = np.array(extra_info[k])
 
         # extract behavior
+        # EXCLUDING TRIAL INDICES BASED ON BEHAVIOR STATUS
         if include_behavior:
             pupil, dpupil, pupil_center, valid_eye = (Eye & key).fetch1('pupil', 'dpupil', 'center', 'valid')
             pupil_center = pupil_center.T
