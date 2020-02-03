@@ -15,7 +15,9 @@ from neuro_data.static_images.data_schemas import StaticMultiDataset
 
 from staticnet_experiments.configs import NetworkConfig, TrainConfig, ReadoutConfig, ShifterConfig, DataConfig, CoreConfig, ModulatorConfig
 from staticnet_experiments.models import Model
-neurodata_static = dj.create_virtual_module('neurodata_static', 'neurodata_static')
+
+stimulus = dj.create_virtual_module('stimulus','pipeline_stimulus')
+schema = dj.schema('neurodata_static')
 
 from .dj_parent import DJTableBase
 
@@ -270,4 +272,73 @@ class FakeResponseFromImages(dj.Manual, DJTableBase):
         assert np.allclose(fake_reloaded['responses'].value, fake_response)
 
 
+    @staticmethod
+    def get_fake_data_path(key):
+        # Assume that fake data is in the same path as the original one
+        orig_h5_path = (InputResponse & target_scans[0]).get_filename()
+
+        f_name = 'fake_responses'
+        for val in key.values():
+            f_name +=str(val) + '-'
+        f_name = f_name[:-1] + '.h5'
+
+        return os.path.join(os.path.dirname(orig_h5_path), f_name)
+
+
+@schema
+class FakeStaticSpikeTriggeredAverageRF(dj.Manual):
+    definition = """
+    # spike trigerred average using static image (e.g. imagenet)
+    -> FakeResponseFromImages
+    ---
+    sta_rf                 : external              # STA using fake response
+    """
+
+    @classmethod
+    def fill(cls, key):
+        # Get data
+        print('Loading data')
+        response_block = (FakeResponseFromImages & key).fetch1('response')
+        frames = (Frame * (stimulus.Trial & key)).fetch('frame')
+        frames = np.stack(frames).astype(np.float32)
+
+        print('Iterating over units')
+        sta_rf = np.zeros(shape=(response_block.shape[-1],*frames.shape[1:]))
+
+        for ind, response in enumerate(response_block.T):
+            sta_rf[ind] = np.average(frames, weights=response/response.sum(), axis=0)
+            
+        cls.insert1(dict(key, sta_rf=sta_rf))
         
+    @classmethod
+    def plot_sta(cls, key, num_to_plot=10):
+
+        sta_rf = (cls & key).fetch1('sta_rf')
+        # frames = (Frame * (stimulus.Trial & key)).fetch('frame', limit=num_to_plot)
+        
+        fig, ax_list = plt.subplots(num_to_plot, 4, figsize=(10,20))
+        
+        for ind, ax in enumerate(ax_list):
+            if ind ==0:
+                ax[0].set_title('STA RF')
+                ax[1].set_title('STA RF blue')
+                ax[2].set_title('STA RF UV')
+                ax[3].set_title('STA RF blue - UV')
+
+            temp_img = np.zeros((*(sta_rf[ind,:].shape[:-1]), 3))
+            temp_img[:,:,:2] = sta_rf[ind,:]
+            for i in range(2):
+                temp_img[:,:,i] = (temp_img[:,:,i] - temp_img[:,:,i].min())/\
+                                (temp_img[:,:,i].max()- temp_img[:,:,i].min())
+            ax[0].imshow(temp_img)
+            ax[0].set_axis_off()
+            ax[1].imshow(sta_rf[ind,:,:,0])
+            ax[1].set_axis_off()
+            ax[2].imshow(sta_rf[ind,:,:,1])
+            ax[2].set_axis_off()
+            ax[3].imshow(sta_rf[ind,:,:,0] - sta_rf[ind,:,:,1])
+            ax[3].set_axis_off()
+
+        return fig
+
+
