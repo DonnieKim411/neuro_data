@@ -107,3 +107,9 @@ venv.bak/
 
 # vscode
 .vscode/
+
+# h5 files
+*.h5
+
+# png files
+*.png
