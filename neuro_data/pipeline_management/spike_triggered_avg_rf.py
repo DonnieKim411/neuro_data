@@ -9,10 +9,8 @@ from neuro_data.static_images import data_schemas
 stimulus = dj.create_virtual_module('stimulus', 'pipeline_stimulus')
 
 # raw data storage
-dj.config['extnernal'] = dict(protocol='file',
+dj.config['external'] = dict(protocol='file',
                               location='/external/')
-
-# dj.config['external-data'] = {'protocol': 'file', 'location': '/external/'}
 
 schema = dj.schema('neurodata_static')
 
